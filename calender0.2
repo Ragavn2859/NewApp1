@@ -1,0 +1,275 @@
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
+import calendar
+from datetime import datetime, timedelta
+import json
+import os
+
+class CalendarTodoApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Calendar Todo List App")
+        self.root.geometry("700x600")
+        self.root.resizable(False, False)
+        self.style = ttk.Style(self.root)
+        self.style.theme_use('clam')
+
+        # Colors and fonts
+        self.bg_color = "#1e1e2f"
+        self.fg_color = "#f8f8f2"
+        self.highlight_color = "#6272a4"
+        self.accent_color = "#bd93f9"
+        self.font_name = "Segoe UI"
+        self.root.config(bg=self.bg_color)
+        self.style.configure('TButton', background=self.highlight_color, foreground=self.fg_color, font=(self.font_name, 10, 'bold'))
+        self.style.map('TButton', background=[('active', self.accent_color)])
+        self.style.configure('TLabel', background=self.bg_color, foreground=self.fg_color, font=(self.font_name, 12))
+        self.style.configure('Calendar.TButton', background=self.bg_color, foreground=self.fg_color, font=(self.font_name, 10))
+        self.style.map('Calendar.TButton', background=[('active', self.accent_color)])
+
+        # Initialize date vars
+        self.today = datetime.today()
+        self.current_year = self.today.year
+        self.current_month = self.today.month
+        self.selected_day = self.today.day
+
+        # Data file for todos
+        self.data_file = "todo_data.json"
+        self.todos = self.load_todos()
+
+        # Build UI
+        self.build_widgets()
+        self.show_calendar()
+        self.update_todo_list()
+
+    def build_widgets(self):
+        # Header for month and year with nav buttons
+        header_frame = tk.Frame(self.root, bg=self.bg_color)
+        header_frame.pack(pady=10)
+
+        self.prev_button = ttk.Button(header_frame, text="<<", command=self.prev_month)
+        self.prev_button.grid(row=0, column=0, padx=5)
+
+        self.month_year_label = ttk.Label(header_frame, text="", font=(self.font_name, 16, 'bold'))
+        self.month_year_label.grid(row=0, column=1, padx=15)
+
+        self.next_button = ttk.Button(header_frame, text=">>", command=self.next_month)
+        self.next_button.grid(row=0, column=2, padx=5)
+
+        # Calendar frame
+        self.calendar_frame = tk.Frame(self.root, bg=self.bg_color)
+        self.calendar_frame.pack()
+
+        # Weekday headers
+        days_frame = tk.Frame(self.root, bg=self.bg_color)
+        days_frame.pack(pady=(10,0))
+
+        self.days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        for i, day in enumerate(self.days):
+            label = ttk.Label(days_frame, text=day, width=6, anchor='center')
+            label.grid(row=0, column=i, padx=1)
+
+        # Todo list frame
+        todo_frame = tk.Frame(self.root, bg=self.bg_color)
+        todo_frame.pack(fill='both', expand=True, padx=10, pady=10)
+
+        todo_label = ttk.Label(todo_frame, text="Todo List for Selected Date", font=(self.font_name, 14, 'bold'))
+        todo_label.pack(anchor='w')
+
+        # Listbox for todos with scrollbar
+        listbox_frame = tk.Frame(todo_frame)
+        listbox_frame.pack(fill='both', expand=True, pady=5)
+
+        self.todo_listbox = tk.Listbox(listbox_frame, font=(self.font_name, 12), bg="#282a36", fg=self.fg_color,
+                                       selectbackground=self.accent_color, activestyle='none', highlightthickness=0, bd=0)
+        self.todo_listbox.pack(side='left', fill='both', expand=True)
+        self.todo_listbox.bind('<Double-Button-1>', self.toggle_complete_todo)
+
+        scrollbar = ttk.Scrollbar(listbox_frame, orient='vertical', command=self.todo_listbox.yview)
+        scrollbar.pack(side='right', fill='y')
+        self.todo_listbox.config(yscrollcommand=scrollbar.set)
+
+        # Buttons for todo actions
+        buttons_frame = tk.Frame(todo_frame, bg=self.bg_color)
+        buttons_frame.pack(pady=5)
+
+        self.add_button = ttk.Button(buttons_frame, text="Add Todo", command=self.add_todo)
+        self.add_button.grid(row=0, column=0, padx=5)
+
+        self.edit_button = ttk.Button(buttons_frame, text="Edit Todo", command=self.edit_todo)
+        self.edit_button.grid(row=0, column=1, padx=5)
+
+        self.delete_button = ttk.Button(buttons_frame, text="Delete Todo", command=self.delete_todo)
+        self.delete_button.grid(row=0, column=2, padx=5)
+
+        self.clear_button = ttk.Button(buttons_frame, text="Clear Completed", command=self.clear_completed_todos)
+        self.clear_button.grid(row=0, column=3, padx=5)
+
+    def show_calendar(self):
+        # Clear previous calendar buttons
+        for widget in self.calendar_frame.winfo_children():
+            widget.destroy()
+
+        # Update month and year label
+        month_name = calendar.month_name[self.current_month]
+        self.month_year_label.config(text=f"{month_name} {self.current_year}")
+
+        # Get first day of the month and number of days
+        month_calendar = calendar.monthcalendar(self.current_year, self.current_month)
+
+        # Create buttons for each day
+        for week_idx, week in enumerate(month_calendar):
+            for day_idx, day in enumerate(week):
+                if day == 0:
+                    # Empty day slots in calendar
+                    label = tk.Label(self.calendar_frame, text=" ", width=6, height=2, bg=self.bg_color)
+                    label.grid(row=week_idx, column=day_idx, padx=2, pady=2)
+                else:
+                    # Highlight today's date
+                    bg = self.bg_color
+                    fg = self.fg_color
+                    font_weight = 'normal'
+
+                    date_key = self.date_key(self.current_year, self.current_month, day)
+                    # Highlight if there are todos
+                    if date_key in self.todos and len(self.todos[date_key]) > 0:
+                        bg = self.highlight_color
+
+                    if (self.current_year == self.today.year and
+                        self.current_month == self.today.month and
+                        day == self.today.day):
+                        font_weight = 'bold'
+                        fg = self.accent_color
+
+                    # Highlight selected day
+                    if day == self.selected_day:
+                        bg = self.accent_color
+                        fg = "#000000"
+                        font_weight = 'bold'
+
+                    btn = tk.Button(self.calendar_frame, text=str(day), width=6, height=2,
+                                    bg=bg, fg=fg, relief='flat',
+                                    font=(self.font_name, 11, font_weight),
+                                    command=lambda d=day: self.select_day(d))
+                    btn.grid(row=week_idx, column=day_idx, padx=2, pady=2)
+
+    def select_day(self, day):
+        self.selected_day = day
+        self.show_calendar()
+        self.update_todo_list()
+
+    def update_todo_list(self):
+        self.todo_listbox.delete(0, tk.END)
+        date_key = self.date_key(self.current_year, self.current_month, self.selected_day)
+        if date_key in self.todos:
+            for idx, todo in enumerate(self.todos[date_key]):
+                text = todo['task']
+                if todo.get('completed'):
+                    text = "✓ " + text
+                self.todo_listbox.insert(tk.END, text)
+
+    def get_selected_todo_index(self):
+        selected = self.todo_listbox.curselection()
+        if not selected:
+            messagebox.showwarning("No selection", "Please select a todo item first.")
+            return None
+        return selected[0]
+
+    def add_todo(self):
+        task = simpledialog.askstring("Add Todo", "Enter a new todo task:")
+        if task:
+            date_key = self.date_key(self.current_year, self.current_month, self.selected_day)
+            if date_key not in self.todos:
+                self.todos[date_key] = []
+            self.todos[date_key].append({'task': task, 'completed': False})
+            self.save_todos()
+            self.update_todo_list()
+            self.show_calendar()
+
+    def edit_todo(self):
+        idx = self.get_selected_todo_index()
+        if idx is not None:
+            date_key = self.date_key(self.current_year, self.current_month, self.selected_day)
+            current_task = self.todos[date_key][idx]['task']
+            new_task = simpledialog.askstring("Edit Todo", "Edit todo task:", initialvalue=current_task)
+            if new_task:
+                self.todos[date_key][idx]['task'] = new_task
+                self.save_todos()
+                self.update_todo_list()
+                self.show_calendar()
+
+    def delete_todo(self):
+        idx = self.get_selected_todo_index()
+        if idx is not None:
+            date_key = self.date_key(self.current_year, self.current_month, self.selected_day)
+            del self.todos[date_key][idx]
+            if len(self.todos[date_key]) == 0:
+                del self.todos[date_key]
+            self.save_todos()
+            self.update_todo_list()
+            self.show_calendar()
+
+    def toggle_complete_todo(self, event):
+        idx = self.get_selected_todo_index()
+        if idx is not None:
+            date_key = self.date_key(self.current_year, self.current_month, self.selected_day)
+            current_status = self.todos[date_key][idx].get('completed', False)
+            self.todos[date_key][idx]['completed'] = not current_status
+            self.save_todos()
+            self.update_todo_list()
+            self.show_calendar()
+
+    def clear_completed_todos(self):
+        date_key = self.date_key(self.current_year, self.current_month, self.selected_day)
+        if date_key in self.todos:
+            self.todos[date_key] = [td for td in self.todos[date_key] if not td.get('completed', False)]
+            if len(self.todos[date_key]) == 0:
+                del self.todos[date_key]
+            self.save_todos()
+            self.update_todo_list()
+            self.show_calendar()
+
+    def prev_month(self):
+        if self.current_month == 1:
+            self.current_month = 12
+            self.current_year -= 1
+        else:
+            self.current_month -= 1
+        self.selected_day = 1
+        self.show_calendar()
+        self.update_todo_list()
+
+    def next_month(self):
+        if self.current_month == 12:
+            self.current_month = 1
+            self.current_year += 1
+        else:
+            self.current_month += 1
+        self.selected_day = 1
+        self.show_calendar()
+        self.update_todo_list()
+
+    def date_key(self, year, month, day):
+        return f"{year:04d}-{month:02d}-{day:02d}"
+
+    def load_todos(self):
+        if os.path.exists(self.data_file):
+            with open(self.data_file, "r") as f:
+                try:
+                    return json.load(f)
+                except:
+                    return {}
+        else:
+            return {}
+
+    def save_todos(self):
+        with open(self.data_file, "w") as f:
+            json.dump(self.todos, f, indent=4)
+
+def main():
+    root = tk.Tk()
+    app = CalendarTodoApp(root)
+    root.mainloop()
+
+if __name__ == "__main__":
+    main()
